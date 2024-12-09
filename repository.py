@@ -22,23 +22,24 @@ class Repository:
         url = f"{self.client.base_url}/repos/{self.owner}/{self.name}/rulesets"
         response = requests.get(url, headers=self.client.headers)
         if response.status_code != 200:
-            raise ValueError(f"Es aquí: {response.raise_for_status()}")
+            raise ValueError(f"Es aquí: {response.text}")
         return response.json()
 
     def create_ruleset(self, ruleset):
         url = f"{self.client.base_url}/repos/{self.owner}/{self.name}/rulesets"
         response = requests.post(url, headers=self.client.headers, json=ruleset)
-        if response.status_code != 200:
-            raise ValueError(f"O aquí: {response.raise_for_status()}")
+        response.raise_for_status()
         return response.json()
 
     def copy_rulesets_from(self, template_repo):
         rulesets = template_repo.get_rulesets()
-        print(rulesets)
         for ruleset in rulesets:
-            for field in ['id', 'creator', 'created_at', 'updated_at', 'url']:
-                ruleset.pop(field, None)
-            self.create_ruleset(ruleset)
+            url = ruleset["_links"]["self"]["href"]
+            response = requests.get(url, headers=self.client.headers).json()
+            new_ruleset = {}
+            for field in ['name', 'target', 'enforcement', 'bypass_actors', 'conditions', 'rules']:
+                new_ruleset[field] = response.pop(field)
+            self.create_ruleset(new_ruleset)
 
     def get_branches(self):
         url = f"{self.client.base_url}/repos/{self.owner}/{self.name}/branches"
