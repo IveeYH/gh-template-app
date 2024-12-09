@@ -1,86 +1,70 @@
 import streamlit as st
-from github import Github
-from github.Repository import Repository
-from github.Organization import Organization
+from github_client import GitHubClient
+
+# Streamlit App Configuration
+st.set_page_config(page_title="GitHub Manager", layout="wide")
+
+# Title
+st.title("GitHub Repository Manager")
 
 # Step 1: Authenticate via GitHub
-def authenticate_github(token):
+st.header("Step 1: Authenticate via GitHub")
+github_token = st.text_input("Enter your GitHub Token", type="password")
+
+if github_token:
     try:
-        return Github(token)
+        client = GitHubClient(github_token)
+        st.success("Authenticated successfully!")
     except Exception as e:
         st.error(f"Authentication failed: {e}")
-        return None
 
-# Step 2: Fetch organizations and repositories
-def fetch_organizations(g):
-    try:
-        return g.get_user().get_orgs()
-    except Exception as e:
-        st.error(f"Failed to fetch organizations: {e}")
-        return []
-
-def fetch_template_repos(org):
-    try:
-        return [repo for repo in org.get_repos() if repo.is_template]
-    except Exception as e:
-        st.error(f"Failed to fetch template repositories: {e}")
-        return []
-
-# Step 3: Copy branch rules to the new repository
-def copy_branch_rules(source_repo: Repository, target_repo: Repository):
-    try:
-        branch_rules = source_repo.get_branch_protection("main")
-        target_repo.get_branch("main").edit_protection(
-            enforce_admins=branch_rules.enforce_admins,
-            required_status_checks=branch_rules.required_status_checks,
-            restrictions=branch_rules.restrictions,
-            required_pull_request_reviews=branch_rules.required_pull_request_reviews
-        )
-    except Exception as e:
-        st.warning(f"Failed to copy branch rules: {e}")
-
-# Step 4: Create new repository from template
-def create_repo_from_template(template_repo: Repository, org: Organization, new_repo_name):
-    try:
-        new_repo = org.create_repo_from_template(
-            name=new_repo_name,
-            repo=template_repo,
-            include_all_branches=True,
-            private=True
-        )
-        copy_branch_rules(template_repo, new_repo)
-        st.success(f"Repository {new_repo_name} created successfully!")
-        return new_repo
-    except Exception as e:
-        st.error(f"Failed to create repository: {e}")
-
-# Streamlit App Layout
-st.title("GitHub Repository Creator")
-
-# GitHub Token Input 
-github_token = st.text_input("Enter your GitHub token:", type="password")
+# Step 2: Select Organization and Template Repositories
 if github_token:
-    github_client = authenticate_github(github_token)
-    if github_client:
-        organizations = fetch_organizations(github_client)
-        if organizations:
-            org_names = [org.login for org in organizations]
-            selected_org_name = st.selectbox("Select an organization:", org_names)
+    st.header("Step 2: Select Organization and Template Repositories")
+    organizations = client.list_organizations()
+    org_names = [org["login"] for org in organizations]
 
-            selected_org = next((org for org in organizations if org.login == selected_org_name), None)
-            if selected_org:
-                template_repos = fetch_template_repos(selected_org)
+    selected_org = st.selectbox("Select Organization", options=org_names)
 
-                if template_repos:
-                    template_names = [repo.name for repo in template_repos]
-                    selected_template_name = st.selectbox("Select a template repository:", template_names)
+    if selected_org:
+        templates = client.list_template_repositories(selected_org, is_org=True)
+        template_names = [template.name for template in templates]
 
-                    selected_template = next((repo for repo in template_repos if repo.name == selected_template_name), None)
+        if template_names:
+            selected_template = st.selectbox("Select a Template Repository", options=template_names)
+            if selected_template:
+                selected_template_repo = next(repo for repo in templates if repo.name == selected_template)
+        else:
+            st.warning("No template repositories found for the selected organization.")
 
-                    if selected_template:
-                        new_repo_name = st.text_input("Enter the name for the new repository:")
+# Step 3: Create a Repository Based on Template
+if github_token and selected_template:
+    st.header("Step 3: Create a Repository from Template")
 
-                        if st.button("Create Repository") and new_repo_name:
-                            create_repo_from_template(selected_template, selected_org, new_repo_name)
-                        elif st.button("Create Repository"):
-                            st.warning("Please enter a repository name before proceeding.")
+    with st.form("Create Repo Form"):
+        new_repo_name = st.text_input("Enter New Repository Name")
+        is_private = st.checkbox("Make Private", value=True)
+        include_branches = st.checkbox("Include Branches", value=True)
+
+        submitted = st.form_submit_button("Create Repository")
+
+        if submitted:
+            try:
+                st.text(f"{selected_template_repo.name} --> {new_repo_name}")
+                # Create new repository
+                new_repo = client.create_repo_from_template(
+                    template_owner=selected_template_repo.owner,
+                    template_repo=selected_template_repo.name,
+                    new_repo_name=new_repo_name,
+                    owner=selected_org,
+                    private=is_private,
+                    include_all_branches=include_branches
+                )
+
+                st.success(f"Repository '{new_repo_name}' created successfully")
+
+                # Copy rulesets
+                new_repo.copy_rulesets_from(selected_template_repo)
+                st.success("Rulesets copied!")
+            except Exception as e:
+                st.error(f"Failed to create repository: {e}")

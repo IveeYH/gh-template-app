@@ -1,2 +1,2 @@
-from github import Auth
+from github_client import Auth
 
